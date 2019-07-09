@@ -6,10 +6,10 @@ program define mapmaker_setup
 	cap mkdir "`c(sysdir_personal)'mapmaker"
 	
 	* Store current working directory
-	local old_dir `c(pwd)'
+	local old_dir = "`c(pwd)'"
 
 	* Change directory to mapmaker directory
-	cd `c(sysdir_personal)'mapmaker
+	cd "`c(sysdir_personal)'mapmaker"
 
 	* Copy file from github to mapmaker
 	di "Downloading latest mapmaker source from Github..."
