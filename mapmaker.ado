@@ -295,7 +295,7 @@ if "`debug'"!="" {
 
 * If debug not enabled, run python script in normal shell
 if "`debug'"=="" {
-	python script map_maker.py `opts'
+	python script map_maker.py, args(`opts')
 }
 
 * if nodisplay isn't declared, load graph
