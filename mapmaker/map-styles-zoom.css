@@ -1,0 +1,94 @@
+/*styles for the map boundaries & text*/
+
+.g-map {
+  position: relative;
+  font-family: Helvetica, Arial;
+  font-size: 8px;
+  background-color: #ffffff;   /*comment this out for transparent backgrounds */
+}
+
+.g-map svg {
+  overflow: hidden;
+  position: absolute;
+   background-color: #ffffff;  /*comment this out for transparent backgrounds */
+}
+
+/* State boundaries mesh -- overlaid on top of county, cz or zip maps*/
+.g-map .statesMesh {
+  stroke-width:1;
+  fill: none;
+  stroke: #ffffff;
+  stroke-opacity: 0.6;
+}
+
+/* County boundaries mesh -- overlaid on top of ZIP or tract maps*/
+.g-map .countiesMesh {
+  stroke-width:0.2;
+  fill: none;
+  stroke: #ffffff;
+  stroke-opacity: 1;
+}
+
+/* Roads */
+.g-map .roads {
+  stroke-width:3;
+  stroke: #000000;
+  stroke-opacity: 1;
+}
+
+/* State outlines */
+.g-map .state {
+  stroke-width:1;
+  stroke: #fff;
+}
+
+/* Commuting zone outlines */
+.g-map .cz {
+  stroke: #999;
+  stroke-width: 0.5;
+}
+
+/* County outlines */
+.g-map .ct {
+  stroke: #fff;
+  stroke-width: 0.15;
+}
+
+/* Washington tract (tract2010_wa) outlines */
+.g-map .twa {
+  stroke: #ffffff;
+  fill: #ffffff;
+  stroke-width: 0.01; /* XX this controls the width of tract boundary lines! normal: 0.04*/
+  stroke-opacity: 1.0; /* XX change to transparent from 1.0*/
+}
+
+/* Upper midwest tract (tract2010_um) outlines */
+.g-map .tmw {
+  stroke: #ffffff;
+  fill: #ffffff;
+  stroke-width: 0.025; /* XX this controls the width of tract boundary lines! normal: 0.04*/
+  stroke-opacity: 1.0; /* XX change to transparent from 1.0*/
+}
+
+ /*Low-res tract national map outlines */
+.g-map .tlr {
+  stroke: #ffffff;
+  fill: #ffffff;
+  stroke-width: 0.02; /* XX this controls the width of tract boundary lines! normal: 0.04*/
+  stroke-opacity: 1.0; /* XX change to transparent from 1.0*/
+} 
+*/
+/* Chicago community area (chicago_ca) outlines */
+.g-map .ca {
+  stroke: #ffffff;
+  fill: #ffffff;
+  stroke-width: 0.04; /* XX this controls the width of tract boundary lines! normal: 0.04*/
+  stroke-opacity: 1.0; /* XX change to transparent from 1.0*/
+}
+
+/* all other lines */
+line {
+  /*stroke: #999;*/
+  stroke: #000000;
+  shape-rendering: crispEdges;
+}
