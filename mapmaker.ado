@@ -1,15 +1,11 @@
 *===============================================================================
-* Maptile 2 - better maptiles using Jimmy Narang's D3JS scripts
-* Requirements:
-*    1. Python installed and 'python' as system env variable (tested on 3.5.2)
-*       (e.g. 'python' at the command line should launch the Python interpreter)
-*    2. Dropbox/Ado folder synced locally
-*    3. Global $dropbox pointed to local dropbox directory (set in profile.do)
-* Last updated: 03/01/2017
+* Mapmaker - better maptiles using Jimmy Narang's D3JS scripts
+* Requirements: Stata 16 and Python installed
+* Last updated: 9jul2019
 *===============================================================================
 
 program define mapmaker
-version 14.1
+version 16
 	
 syntax varname(numeric) [if] [in], ///
 	GEOgraphy(string asis) ///          geography time
@@ -41,16 +37,12 @@ syntax varname(numeric) [if] [in], ///
 preserve
 set more off
 
-
 *-------------------------------------------------------------------------------
 * Clean up arguments
 *-------------------------------------------------------------------------------
 	
 * Set directory for the mapmaker python program
-local map_dir "${dropbox}/ado/mapmaker2/trunk"
-if "`mapdirectory'"!="" {
-	local map_dir "`mapdirectory'"
-}
+local map_dir "`c(sysdir_personal)'mapmaker"
 
 * Store a local with the current working directory
 local work_dir `c(pwd)'
@@ -95,20 +87,6 @@ foreach x in `cutvalues' {
 *-------------------------------------------------------------------------------
 * Exception handling
 *-------------------------------------------------------------------------------
-
-* Prerequisite: Assert $dropbox points to valid directory
-capture confirm $dropbox/newfile
-if !_rc {
-	di as red "You need to set up the global macro $dropbox to point to your synced Dropbox folder."
-	exit 1
-}
-	
-* Prequisite: Assert $dropbox/ado/ points to valid directory (/ado/ synced)
-capture confirm $dropbox/ado/newfile
-if !_rc {
-	di as red "The /ado/ folder in Dropbox must be synced to use this script."
-	exit 1
-}
 
 * XX no check to make sure output filename is valid
 
@@ -346,14 +324,14 @@ if "`defined_temp_geoid'"=="1" {
 
 di " "
 di as text "{hline 80}"
-di " Maptile2"
+di " Mapmaker"
 di " Variable mapped: `pvar'"
 di " Geographic unit: `geography'"
 di " Geographic identifier: `geovar'"
 di " Output: `savegraph'"
 di " Color scheme: `colorscheme' `di_if_default'"
 di " Something wrong? Use the option 'debug' for more error information."
-di " Check {help maptile2: help maptile2} for more usage details."
+di " Check {help mapmapmaker: help mapmaker} for more usage details."
 di as text "{hline 80}"
 
 * Restore working dataset

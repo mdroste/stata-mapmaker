@@ -1,8 +1,8 @@
-v 0.200
+v 0.30
 d
 d 'mapmaker': Pretty D3JS maps from Stata
 d
 d Distribution-Date: 20190709
 d
 f mapmaker.ado
-f src.zip
+f mapmaker_setup.ado
