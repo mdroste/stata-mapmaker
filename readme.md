@@ -3,4 +3,4 @@ mapmaker
 =================================
 
 
-This needs some work to post. Coming soon.
+This needs some work to post. Might have a functional copy up in a few days.
