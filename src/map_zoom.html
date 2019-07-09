@@ -1,0 +1,733 @@
+<head>
+<link rel="stylesheet" type="text/css" href="d3-tip/tooltip-styles.css">
+<link rel="stylesheet" type="text/css" href="map-styles-zoom.css">
+</head>
+<div class="articleSpanImage g-map"></div>
+<script charset="utf-8" src="d3/d3.js"></script>
+<script src="d3/topojson.js"></script>
+<script src="d3/lib.min.js"></script>
+<script src="colorbrewer/colorbrewer-expanded.js"></script>
+<script src="filepaths.js"></script>
+<script src="jquery/jquery-1.11.3.js"></script>
+<script src="textures/textures.js"></script>
+<script src="d3-tip/index.js"></script>
+<script>
+
+//=============================================================================
+// Globals
+//=============================================================================
+
+//NOTE: The below 3 files have to specified *here* and not in a json settings
+// file because they need to be loaded in parallel before anything else initiates.
+// The variable that stores settings from the ChoroplethSettings.json File
+// NEVER HARDCODE values directly into this file; use the json settings file
+
+var choropleth_settings = {};
+
+//=============================================================================
+// Utilities
+//=============================================================================
+
+Array.prototype.insert = function (index, item) {
+  this.splice(index, 0, item);
+};
+
+dispatch = d3.dispatch("load");
+
+queue()
+  .defer(d3.csv, filePaths.dataFile)
+  .defer(d3.json, filePaths.mapFile)
+  .defer(d3.json, filePaths.settingsFile)
+  .await(load);
+
+function load(error, csvData, topologicalData, choropleth_settings) {
+  //The topologicalData file for commuting zones actually contains two features: states and commuting zones
+  //We draw the two separately. To see why we extract a mesh for states and features for commuting zones, see
+  //https://github.com/mbostock/topojson/wiki/API-Reference
+  dispatch.load(csvData, topologicalData, choropleth_settings);
+}
+
+dispatch.on("load.map", function(csvData, topologicalData, choropleth_settings) {
+	if (choropleth_settings.geoType=="tract2010_wa") {
+		var tracts 			= topojson.feature(topologicalData, topologicalData.objects.tracts).features;
+		var countiesMesh 	= topojson.mesh(topologicalData, topologicalData.objects.counties, function(a, b) { return a !== b; });
+		//var roads 			= topojson.feature(topologicalData, topologicalData.objects.roads).features;
+	}
+	else if (choropleth_settings.geoType=="tract2010_um") {
+		var tracts 			= topojson.feature(topologicalData, topologicalData.objects.tracts).features;
+		var countiesMesh 	= topojson.mesh(topologicalData, topologicalData.objects.counties, function(a, b) { return a !== b; });
+	}
+	else if (choropleth_settings.geoType=="tract2010_lores") {
+		console.log(topologicalData.objects);
+		var tracts 			= topojson.feature(topologicalData, topologicalData.objects.tract2010_lores).features;
+		var countiesMesh 	= topojson.mesh(topologicalData, topologicalData.objects.counties_hr, function(a, b) { return a !== b; });
+	}
+	else if (choropleth_settings.geoType=="chicago_ca") {
+		var cas 			= topojson.feature(topologicalData, topologicalData.objects.chicago_cas).features;
+	}
+	else if (choropleth_settings.geoType=="counties_hr") {
+		var counties		= topojson.feature(topologicalData, topologicalData.objects.counties_hr).features;
+	}
+	else {
+		var statesMesh 		= topojson.mesh(topologicalData, topologicalData.objects.states, function(a, b) { return a !== b; });
+		var countiesMesh 	= topojson.mesh(topologicalData, topologicalData.objects.counties, function(a, b) { return a !== b; });
+		var states 			= topojson.feature(topologicalData, topologicalData.objects.states).features;
+		var commutingZones 	= topojson.feature(topologicalData, topologicalData.objects.commute).features;
+		var counties 		= topojson.feature(topologicalData, topologicalData.objects.counties).features;
+		var zipCodes 		= topojson.feature(topologicalData, topologicalData.objects.zip_codes).features;
+	}
+	// Create local shorthand variables from choropleth_settings
+	var canvas_width 		= choropleth_settings.canvasWidth;
+	var canvas_height 		= choropleth_settings.canvasHeight;
+	var geo_type 			= choropleth_settings.geoType;
+	var ls_w 				= choropleth_settings.legendWidth;
+	var ls_h 				= choropleth_settings.legendHeight;
+	var map_scale 			= choropleth_settings.mapScale;
+	var font_size 			= parseInt(choropleth_settings.fontSize);
+	var csv_id_col 			= choropleth_settings.idColumn;
+	var csv_data_col 		= choropleth_settings.dataColumn;
+	var cutoffs 			= choropleth_settings.cutoffs;	
+	var tooltip_fields 		= choropleth_settings.tooltips;
+	var draw_legend 		= ! Boolean(choropleth_settings.noLegend);
+	var draw_primary_roads 	= Boolean(choropleth_settings.drawPrimaryRoads); // XX here is where i am
+	var draw_states_mesh 	= Boolean(choropleth_settings.drawStatesMesh);
+	var draw_counties_mesh 	= Boolean(choropleth_settings.drawCountiesMesh);
+	var scale_type 			= choropleth_settings.scaleType.toLowerCase();
+	var parts 				= choropleth_settings.parts;
+	var margin 				= choropleth_settings.margin;
+	var legend_labels 		= (choropleth_settings.legendLabels) ? choropleth_settings.legendLabels : [];
+	var label_for_missing 	= choropleth_settings.labelForMissingData;
+	// XX MIKE HOTFIX FOR THE ABOVE
+	label_for_missing 		= label_for_missing.replace(/`"/g,"");
+	label_for_missing 		= label_for_missing.replace(/"'/g,"");
+	var leave_out 			= "leave_out" // If this is specified as labelForMissingData, then the missing data legend entry is not drawn
+	var cb_scheme 			= choropleth_settings.colorScheme;
+	var format_str 			= choropleth_settings.formatStr;
+	var legend_style 		= choropleth_settings.legendStyle;
+	var projection_type 	= choropleth_settings.projectionType;
+	
+	// Colors and scale variables
+	var color_scheme = [];
+	var legend_color_scheme = [];	
+	var scale;
+	var scale_domain;
+	
+	// If ID column and Data column are not specified, we assume these to be the first and second col of the csv respectively.
+	if(csv_id_col == null || csv_id_col.trim() == "") {
+		csv_id_col = Object.keys(csvData[0])[0];
+	}
+	if(csv_data_col == null || csv_data_col.trim() == "") {
+		csv_data_col = Object.keys(csvData[0])[1];
+	}
+	
+	// A dictionary to map topological units (ID col) to the data column we wish to plot
+	var csvDataDict = {};
+	$.map(csvData, function(d){csvDataDict[d[csv_id_col]] = parseFloat(d[csv_data_col])})
+	//console.log(csvDataDict);
+	
+	// XX MCD: Need a dictionary to see if a given ID from geography is in dataset
+	// Key: geoid; value: =1 if in CSV dataset, missing otherwise
+	var csvIdDict = {};
+	$.map(csvData, function(d){csvIdDict[d[csv_id_col]] = 1})
+	
+	// XX mike: just for geotype=tract2010_um, i want to destring the id because i'm dangerous
+	
+	// A dictionary to map topological units to all the other properties in the file.
+	// TODO: Merge with csvDataDict to save time & space; even better, do this step in the "load" callback
+	var csvPropsDict = {};
+	var showToolTip = tooltip_fields.length > 0;
+	if(showToolTip) {
+		$.map(csvData, function(d){csvPropsDict[d[csv_id_col]] = d});
+	}
+	
+	// If the scale type is "quantile", we require "parts" to be specified by the user and ignore "cutoffs"
+	// Else if scale is "Threshold", we use the cutoffs provided by the user to determine "parts" 
+	// and ignore any "parts" setting specified by the user.
+	parts =  (scale_type == "quantile") ? parseInt(parts) : cutoffs.length + 1;		
+		
+	// If a colorbrewer scheme is specified, use it; 
+	// otherwise the user should specify an array of colors of the appropriate length
+	color_scheme = (cb_scheme) ? colorbrewer[cb_scheme][parts] : choropleth_settings.colors;		
+	// If you want lower numbers to correspond to darker values
+	if(choropleth_settings.invertColors) {
+		color_scheme = color_scheme.reverse();
+	}
+
+	//-------------------------------------------------------------------------
+	// Construct the scale
+	//-------------------------------------------------------------------------
+	
+	if(scale_type == "quantile") {				
+		scale_domain = $.map(csvData, function(d) {return parseFloat(d[csv_data_col])});
+		scale = d3.scale.quantile().domain(scale_domain).range(color_scheme);
+		cutoffs = scale.quantiles();
+	}
+	else {		
+		scale_domain = cutoffs;
+		scale = d3.scale.threshold().domain(scale_domain).range(color_scheme);
+	}
+	
+	//-------------------------------------------------------------------------
+	// Start drawing the SVG
+	//-------------------------------------------------------------------------
+	
+	var	width = canvas_width - margin.left - margin.right,
+		height = canvas_height - margin.top - margin.bottom;
+
+	// Set projection as Mercator for zoomed maps
+	var projection = d3.geo.mercator().scale(map_scale).translate([width / 2, height / 2]),
+					 path = d3.geo.path().projection(projection);
+
+	var html = d3.select(".articleSpanImage").classed("g-map", true).html("");
+
+	var svg = html.append("svg")
+		.attr("width", width + margin.left + margin.right)
+		.attr("height", height + margin.top + margin.bottom)
+		.append("g")
+		.attr("transform", "translate(" + margin.left + "," + margin.top + ")")
+		.attr("id", "choropleth");
+		
+	// Define the hatch pattern for missing data
+	// See http://riccardoscalco.github.io/textures/ for details
+	var t_missing = textures.lines().size(0.4).strokeWidth(0.1);
+	var t_missing_legend = textures.lines().size(8).strokeWidth(2);
+	svg.call(t_missing);
+	svg.call(t_missing_legend);
+	
+	// Draw the map	
+	var gmap = svg.append("g")
+	var gmap2 = gmap.append("g");
+	var cts, czs;
+	
+	// Function to show tooltip
+	var tip = d3.tip()
+		.attr('class', 'd3-tip')
+		.html(function(d) {				
+			if(!showToolTip)
+				return;
+			var ttstr = "";
+			for(var i = 0; i < tooltip_fields.length; i++) {
+				prop = tooltip_fields[i];
+				if(! (d.properties.id in csvPropsDict) || !(prop in csvPropsDict[d.properties.id]) ) {
+					ttstr = ttstr + prop + ": " + label_for_missing + "<br>" ;
+				}
+				else {
+					ttstr = ttstr + prop + ": " + csvPropsDict[d.properties.id][prop] + "<br>" ;
+				}
+			}
+			return '<span>' +ttstr + '</span>'
+		})
+		.offset([0, 0]) 
+
+	//Don't draw the missing box square if the label has been set to this particular keyword
+	var drawMissing = !(label_for_missing == leave_out);
+	
+	var coloredMinX, coloredMinY, coloredMaxX, coloredMaxY
+	
+	function GetDrawnComponentClass() {
+		if(geo_type.toLowerCase() == "cz") {
+			return(".cz")
+		}
+		else if(geo_type.toLowerCase() == "ct" || geo_type.toLowerCase() == "county") {
+			return(".ct")
+		}
+		else if(geo_type.toLowerCase() == "chicago_ca") {
+			return(".ca")
+		}
+		else if(geo_type.toLowerCase() == "tract2010_wa") {
+			return(".twa")
+		}
+		else if(geo_type.toLowerCase() == "tract2010_um") {
+			return(".tmw")
+		}
+		else if(geo_type.toLowerCase() == "tract2010_lores") {
+			return(".tlr")
+		}
+		else if(geo_type.toLowerCase() == "counties_hr") {
+			return(".ct")
+		}
+		else if(geo_type.toLowerCase() == "county2010_ne") {
+			return(".ct")
+		}
+		else if(geo_type.toLowerCase() == "zp" || geo_type.toLowerCase() == "zip") {
+			return(".zip")
+		}
+		else if(geo_type.toLowerCase() == "st" || geo_type.toLowerCase() == "state") {
+			return(".st")
+		}
+		else return("")
+	}
+	
+	// A flag to record if  any of the geometries that we need to draw have their value missing.
+	var anyMissing = false;
+	
+	// Initialize tool tip function
+	if(showToolTip) {
+		gmap2.call(tip)
+	}
+
+	//-------------------------------------------------------------------------
+	// Draw commuting zones
+	//-------------------------------------------------------------------------
+	
+	if(geo_type.toLowerCase() == "cz") {
+		czs = gmap2.selectAll(".cz")
+				.data(commutingZones)
+				.enter().append("path")
+				.filter(function(d){return !isNaN(csvDataDict[d.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "cz"+d.id; })
+				.attr("class", "cz")
+				.style("fill", function(d) { 		
+					cellValue = csvDataDict[d.id];			
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw counties
+	//-------------------------------------------------------------------------
+	
+	else if(geo_type.toLowerCase() == "ct" || geo_type.toLowerCase() == "county") {
+		cts = gmap2.selectAll(".ct")
+				.data(counties)
+				.enter().append("path")
+				.filter(function(d){return !isNaN(csvDataDict[d.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ct"+d.id; })
+				.attr("class", "ct")
+				.style("fill", function(d) { 		
+					cellValue = csvDataDict[d.id];			
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw high-res counties
+	//-------------------------------------------------------------------------
+	
+	else if(geo_type.toLowerCase() == "counties_hr") {
+		cts = gmap2.selectAll(".ct")
+				.data(counties)
+				.enter().append("path")
+				.filter(function(d){return !isNaN(csvDataDict[d.properties.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ct"+d.properties.id; })
+				.attr("class", "ct")
+				.style("fill", function(d) { 	
+					console.log(d.id);
+					cellValue = csvDataDict[d.properties.id];			
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw high-res new england counties
+	//-------------------------------------------------------------------------
+
+	else if(geo_type.toLowerCase() == "county2010_ne") {
+		cts = gmap2.selectAll(".ct")
+				.data(counties)
+				.enter().append("path")
+				.filter(function(d){return !isNaN(csvDataDict[d.properties.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ct"+d.properties.id; })
+				.attr("class", "ct")
+				.style("fill", function(d) { 		
+					cellValue = csvDataDict[d.properties.id];			
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw tracts - Washington state
+	//-------------------------------------------------------------------------
+	
+	else if (geo_type.toLowerCase() == "tract2010_wa") {
+		trs = gmap2.selectAll(".twa")
+				.data(tracts)
+				.enter().append("path")
+				// XX KEY FOR MISSING DATA IS BELOW
+				//.filter(function(d){return !isNaN(csvDataDict[d.properties.id]);})
+				.filter(function(d){return !isNaN(csvIdDict[d.properties.id]);})
+				//.filter(function(d){return !isNaN(d.properties.id);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ct"+d.properties.id; })
+				.attr("class", "twa")
+				.style("fill", function(d) { 	
+					cellValue = csvDataDict[d.properties.id];
+					//console.log(d.properties.id);
+					//console.log(cellValue);
+					if(drawMissing & isNaN(cellValue)) {
+						anyMissing = true;
+					}
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	// Draw primary roads, if specified
+	if (geo_type.toLowerCase()=="tract2010_wa" & draw_primary_roads) {
+		console.log("drawing roads");
+		trs = gmap2.selectAll(".twa")
+			.data(roads)
+			.enter().append("path")
+			.attr("d", path)
+			.attr("class", "twa")
+			.style('fill', 'none')
+			//.style('stroke', '#708090')
+			.style('stroke', '#000000')
+			.style('stroke-opacity', 0.65)
+			.style('stroke-width', 0.01);
+	}
+
+	//-------------------------------------------------------------------------
+	// Draw tracts - Midwest (IA, IL, MN, WI, IN)
+	//-------------------------------------------------------------------------
+	
+	else if (geo_type.toLowerCase() == "tract2010_um") {
+		console.log("drawing tract2010_um");
+		console.log(csvDataDict);
+		trs = gmap2.selectAll(".tmw")
+				.data(tracts)
+				.enter().append("path")
+				// XX KEY FOR MISSING DATA IS BELOW
+				//.filter(function(d){return !isNaN(csvDataDict[d.properties.id]);})
+				.filter(function(d){return !isNaN(csvIdDict[d.properties.id]);})
+				//.filter(function(d){return !isNaN(d.properties.id);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ct"+d.properties.id; })
+				.attr("class", "tmw")
+				.style("fill", function(d) {
+					//console.log(d.properties.id);
+					//console.log(d.properties.id.toString());
+					cellValue = csvDataDict[d.properties.id];
+					if(drawMissing & isNaN(cellValue)) {
+						console.log("we have missing");
+						anyMissing = true;
+					}
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw tracts - National lo-res (ie not removing water bodies)
+	//-------------------------------------------------------------------------
+	
+	else if (geo_type.toLowerCase() == "tract2010_lores") {
+		console.log("drawing tract2010_lores");
+		//console.log(csvDataDict);
+		trs = gmap2.selectAll(".tlr")
+				.data(tracts)
+				.enter().append("path")
+				// XX KEY FOR MISSING DATA IS BELOW
+				//.filter(function(d){return !isNaN(csvDataDict[d.properties.id]);})
+				//.filter(function(d){return console.log(csvIdDict[d.properties.id]);})
+				.filter(function(d){return !isNaN(csvIdDict[d.properties.id]);})
+				//.filter(function(d){return !isNaN(d.properties.id);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ct"+d.properties.id; })
+				.attr("class", "tlr")
+				.style("fill", function(d) {
+					console.log(d.properties);
+					console.log(d.properties.id);
+					//console.log(d.properties.id.toString());
+					cellValue = csvDataDict[d.properties.id];
+					if(drawMissing & isNaN(cellValue)) {
+						console.log("we have missing");
+						anyMissing = true;
+					}
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw Chicago commuting areas
+	//-------------------------------------------------------------------------
+	
+	else if(geo_type.toLowerCase() == "chicago_ca") {
+		console.log("drawing cas");
+		cas = gmap2.selectAll(".ca")
+				.data(cas)
+				.enter().append("path")
+				//.filter(function(d){return !isNaN(csvDataDict[d.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "ca"+d.properties.id; })
+				.attr("class", "ca")
+				.style("fill", function(d) { 		
+					console.log(d);
+					cellValue = csvDataDict[d.properties.id];	
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+		console.log("drawing cas");
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw zip5
+	//-------------------------------------------------------------------------
+	
+	// xx d.id formerly d.properties.id
+	else if(geo_type.toLowerCase() == "zp" || geo_type.toLowerCase() == "zip") {
+		zips = gmap2.selectAll(".zip")
+				.data(zipCodes)
+				.enter().append("path")
+				.filter(function(d){return !isNaN(csvDataDict[d.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "zip"+d.id; })
+				.attr("class", "zip")
+				.style("fill", function(d) { 		
+					cellValue = csvDataDict[d.id];			
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	//-------------------------------------------------------------------------
+	// Draw states
+	//-------------------------------------------------------------------------
+	
+	else if(geo_type.toLowerCase() == "st" || geo_type.toLowerCase() == "state") {
+		states = gmap2.selectAll(".st")
+				.data(states)
+				.enter().append("path")
+				.filter(function(d){return !isNaN(csvDataDict[d.properties.id]);})
+				.attr("d", path)
+				.attr("id", function(d) { return "st"+d.properties.id; })
+				.attr("class", "st")
+				.style("fill", function(d) { 		
+					cellValue = csvDataDict[d.properties.id];			
+					if(drawMissing) {
+						return isNaN(cellValue) ? t_missing.url() : scale(cellValue);
+					}
+					else {
+						return isNaN(cellValue) ? "none" : scale(cellValue);
+					}
+				})
+	}
+	
+	else {
+		print("Congratulations! You discovered an error that Mike didn't think was possible. Please let Mike know ASAP that you saw this message.")
+	}
+	
+	// Draw the state outlines if required	
+	if(draw_states_mesh) {
+		gmap.append("path")
+			.datum(statesMesh)
+			.attr("d", path)
+			.attr("class", "statesMesh");
+	}
+	
+	// Draw the county outlines if required	
+	if(draw_counties_mesh) {
+		gmap.append("path")
+			.datum(countiesMesh)
+			.attr("d", path)
+			.attr("class", "countiesMesh");
+	}
+	
+	//-------------------------------------------------------------------------
+	// Zoom to colored portion only
+	//-------------------------------------------------------------------------
+
+	function ZoomToRegion(regionClass) {
+		//Get all the regions of this type (zip/state/county/etc) and filter out those of ht/width 0
+		//TODO: Why do we see regions of size 0 at all?
+		var selectedRegions = gmap2.selectAll(regionClass)[0].filter(function(d){return d.getBBox().width != 0 && d.getBBox().height != 0;});
+		var minX = d3.min(selectedRegions, function(d){return d.getBBox().x})
+		var maxX = d3.max(selectedRegions, function(d){return d.getBBox().x + d.getBBox().width})
+		var minY = d3.min(selectedRegions, function(d){return d.getBBox().y})
+		var maxY = d3.max(selectedRegions, function(d){return d.getBBox().y + d.getBBox().height})
+		var dx = maxX - minX;
+		var dy = maxY - minY;
+		var x = (minX + maxX) / 2;
+		var y = (minY + maxY) / 2;
+		var newscale = .8 / Math.max(dx / width, dy / height);
+		var newtranslate = [width / 2 - newscale * x, height / 2 - newscale * y]
+		d3.selectAll(regionClass).attr("transform", "translate(" + newtranslate + ")scale(" + newscale + ")");	
+		// Transform the statemesh
+		d3.selectAll(".statesMesh").attr("transform", "translate(" + newtranslate + ")scale(" + newscale + ")");	
+		// Transform the countymesh
+		d3.selectAll(".countiesMesh").attr("transform", "translate(" + newtranslate + ")scale(" + newscale + ")");	
+	}
+	
+	var drawnComponent = GetDrawnComponentClass()
+	ZoomToRegion(drawnComponent);
+	
+	//-------------------------------------------------------------------------
+	// Draw the legend, if required
+	//-------------------------------------------------------------------------
+	
+	if(draw_legend) {	
+		//console.log("drawing legend")
+		//if font_size is specified & valid use it; otherwise default to half the legend box height. Usually looks pretty that way.
+		if(isNaN(font_size) || font_size <= 0) {
+			font_size =parseInt(ls_h/2);
+		}
+		else {
+			font_size = font_size;
+		}
+		//if draw_legend is true but labels are not specified, we construct them from the cutoffs	
+		if(legend_labels.length == 0) {		
+			var cutoff_strs = [];
+			
+			//Formatstr describes how to format the numbers on the labels. 
+			//See https://github.com/mbostock/d3/wiki/Formatting for the official specification
+			//and http://koaning.s3-website-us-west-2.amazonaws.com/html/d3format.html for an
+			//excellent tutorial.
+			var formatter = d3.format(format_str);
+			cutoff_strs = $.map(cutoffs, function(d){ return formatter(d)});
+
+			//Construct the labels
+			var legend_sep = "\u2013"
+			var le_eq = "\u2264"
+			var gr_eq = "\u2265"
+			
+			if(legend_style == "jama") {
+				legend_labels[0] = le_eq + cutoff_strs[0]
+				for(var i=0; i < cutoff_strs.length - 1; i++) {											
+					legend_labels[i + 1] =  ">" + cutoff_strs[i] + " " + legend_sep + " " + le_eq + cutoff_strs[i+1];					
+				}
+				legend_labels[cutoff_strs.length] = ">" + cutoff_strs[cutoff_strs.length - 1]
+			}		
+			else if(legend_style == "slice_under" || legend_style == "slice_side") {
+				legend_labels[0] = ""
+				for(var i=0; i < cutoff_strs.length; i++) {											
+					legend_labels[i + 1] =  cutoff_strs[i];					
+				}								
+			}
+			else {
+				legend_labels[0] = "< " + cutoff_strs[0]
+				for(var i=0; i < cutoff_strs.length - 1; i++) {											
+					legend_labels[i + 1] =  cutoff_strs[i] + " " + legend_sep + " " + cutoff_strs[i+1];					
+				}
+				legend_labels[cutoff_strs.length] = "> " + cutoff_strs[cutoff_strs.length - 1]
+			}
+		}
+		else {
+			legend_labels = choropleth_settings.legendLabels;
+		}
+		
+		//Draw the legend boxes
+		var text_y_offset = ls_h/2 + 2; //To align text to the boxes' middle, instead of the top.
+		var tick_y_offset = 0; //only relevant if style == slice*
+		var tick_x_offset = 0; //only relevant if style == slice*		
+		var y_padding = 2; //The vertical gap between underline and text in the "slice_under" style
+		var x_padding = 2; //The horizontal gap between line and text in the "slice_side" style
+		
+		var text_x_offset = ls_w * 1.25 //To align text to the right of the boxes
+		if(legend_style == "slice_under") {
+			text_y_offset = ls_h - y_padding //The text is in line with the base of each cell
+			tick_y_offset = ls_h
+			tick_x_offset = 2.25*ls_w
+		}
+		else if(legend_style == "slice_side") {
+			text_y_offset = 1.15 * ls_h;
+			tick_y_offset = ls_h;
+			tick_x_offset = 1.15 * ls_w;
+		}
+
+		//Draw the legend boxes this X displacement onwards
+		var drawnComponents = d3.selectAll(drawnComponent)[0] //subscript [0] actually refers to the array
+		//TODO: Figure out why the line below doesn't work
+		//var rightmost_map_point = d3.max(drawnComponents, function(d){return d.getBBox().x + d.getBBox().width})
+				
+		var rightmost_map_point = d3.max(drawnComponents, function(d){return d.getBoundingClientRect().right})
+		var legend_x = d3.round(rightmost_map_point) + 1
+		//Draw the legend boxes this Y displacement upwards
+		var legend_y_lowest = height 
+		
+		//The first (bottom-most) value in the legend is a rectangle for missing values IF there are any missing values at all.
+		if(anyMissing) {
+			legend_color_scheme = [t_missing_legend.url()]
+		}
+		legend_color_scheme = legend_color_scheme.concat(color_scheme)
+		var legend_boxes = svg.selectAll("rect").data(legend_color_scheme)
+
+		legend_boxes.enter().append("rect")
+		  .attr("x", legend_x)
+		  .attr("y", function(d, i){ return legend_y_lowest - (i*ls_h) - (anyMissing ? ls_h : 0) })
+		  .attr("width", ls_w)
+		  .attr("height", ls_h)
+		  .style("fill", function(d) {return d;});
+	
+		//Add the "Missing value" label to the start
+		if(anyMissing) {
+			legend_labels.insert(0, label_for_missing)
+		}
+		var legend_text = svg.selectAll("text.legendtext")
+			.data(legend_labels)
+		//console.log(anyMissing)
+		
+		//Set styling for the legend's text
+		var styleString = "font-size:" + font_size + "px";
+		
+		legend_text.enter().append("text")
+		  .attr("class", "legendtext")
+		  .attr("x", legend_x  + text_x_offset)
+		  .attr("y", function(d, i){ return legend_y_lowest - (i*ls_h) - (anyMissing ? ls_h : 0) + text_y_offset;})
+		  .attr("style", styleString)
+		  .text(function(d){return d;});
+		}
+		
+		var legend_ticks = svg.selectAll(".legendticks")
+			.data(legend_labels)
+		if(legend_style == "slice_under" || legend_style == "slice_side")
+		{
+			legend_ticks.enter().append("line")		
+				.attr("x1", legend_x)
+				.attr("y1", function(d, i){ return legend_y_lowest - (i*ls_h) - (anyMissing ? ls_h: 0) + tick_y_offset;})
+				.attr("x2", legend_x  + tick_x_offset)
+				.attr("y2", function(d, i){ return legend_y_lowest - (i*ls_h) - (anyMissing ? ls_h: 0) + tick_y_offset;})
+				.attr("class", "legendticks")			
+			
+			//Make the bottom-most tick transparent
+			d3.selectAll(".legendticks")[0][0].style.opacity = 0
+		}
+
+});
+
+</script>
+
