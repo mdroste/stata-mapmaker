@@ -256,8 +256,7 @@ settings = getSettings(args)
 writeSettings(settings, settingsFile)
 
 # Print a friendly message
-print("Running mapmaker now. Don't close this window until it's done.")
-print("If this takes longer than a minute, click here and press enter. This script sometimes hangs...")
+print("Running mapmaker now.")
 
 # Get and Write the paths to 3 files that map.html needs:
 #    - DataFile (provided as an argument)
@@ -299,8 +298,6 @@ if (not args.noImage):
 	if(not retcode):
 		print("The command executed successfully.")
 		print("PNG map written to " + output_filename)
-		if (args.makeSVG):
-			print("SVG map written to " + output_svg_filename)
 	else:
 		print("The command executed unsuccessfully with error code: " + retcode)
 	
