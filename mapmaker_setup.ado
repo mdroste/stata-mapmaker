@@ -19,6 +19,13 @@ program define mapmaker_setup
 	di "Unzipping mapmaker files to `c(sysdir_personal)'mapmaker"
 	unzipfile src.zip, replace
 
+	* Trying to set permissions
+	if "`c(os)'"!="Windows" {
+		di "Windows not detected, trying to set permissions"
+		cd "`c(sysdir_personal)'mapmaker/bin"
+		!chmod 777 mac.phantomjs
+	}
+
 	* Remove zip
 	rm src.zip
 
