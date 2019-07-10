@@ -58,13 +58,26 @@ if "`geovar'"!="" {
 
 * If savegraph() not specified, saved as temp.png in working directory
 if "`savegraph'"=="" {
+	local save_dir `c(pwd)'
+	local filename "temp.png"
 	local savegraph "`work_dir'/temp.png"
 }
 
 * If savegraph() specified without folder, use current working directory
-local x `savegraph'
+local x "`savegraph'"
 if strpos("`savegraph'","\")==0 & strpos("`savegraph'","/")==0 {
+	local filename "`savegraph'"
 	local savegraph "`work_dir'\\`x'"
+}
+
+* If savegraph() specified with folder, store that folder and the filename
+if strpos("`savegraph'","\")!=0 | strpos("`savegraph'","/")!=0 {
+	* Turn all \'s into /'s
+	local savegraph = subinstr("`savegraph'","\","/",.)
+	* Subset to part before last /, call that save_dir
+	local save_dir = "`=strreverse(substr(strreverse("`savegraph'"), strpos(strreverse("`savegraph'"),"/"), .))'"
+	* Call part after last / the filename
+	local filename =  "`=strreverse(substr(strreverse("`savegraph'"), 1, `=strpos(strreverse("`savegraph'"),"/")-1'))'"
 }
 
 * Deal with cutvalues
@@ -274,15 +287,19 @@ if "`meshCounties'"!=""  {
 	local opts `opts' -mc
 }
 
+* High resolution
 if "`maurice'"!="" {
 	local opts `opts' -hr
 }
 
-di "Running map_maker.py with options: `opts'"
-
 * Finally: add in -op
 local opts `opts' -op "`savegraph'"
 	
+
+* Additional developer dialog for debugging
+if "`dev'"!="" {
+	di "Running map_maker.py with options: `opts'"
+}
 	
 *-------------------------------------------------------------------------------
 * Run Python map-maker script with options macro defined above
@@ -299,7 +316,12 @@ if "`debug'"=="" {
 }
 
 * if nodisplay isn't declared, load graph
-if "`nodisplay'"=="" view browse "`savegraph'"
+if "`nodisplay'"=="" {
+	cd "`save_dir'"
+	noi di "Save dir: `save_dir'"
+	noi di "Filename: `filename'"
+	view browse "`filename'"
+}
 	
 *-------------------------------------------------------------------------------
 * Cleanup
@@ -328,9 +350,8 @@ di " Mapmaker"
 di " Variable mapped: `pvar'"
 di " Geographic unit: `geography'"
 di " Geographic identifier: `geovar'"
-di " Output: `savegraph'"
 di " Color scheme: `colorscheme' `di_if_default'"
-di " Something wrong? Use the option 'debug' for more error information."
+di " Output: `savegraph'"
 di " Check {help mapmapmaker: help mapmaker} for more usage details."
 di as text "{hline 80}"
 
