@@ -299,7 +299,7 @@ if "`debug'"=="" {
 }
 
 * if nodisplay isn't declared, load graph
-if "`nodisplay'"=="" view browse `savegraph'
+if "`nodisplay'"=="" view browse "`savegraph'"
 	
 *-------------------------------------------------------------------------------
 * Cleanup

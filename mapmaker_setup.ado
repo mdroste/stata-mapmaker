@@ -13,21 +13,19 @@ program define mapmaker_setup
 
 	* Copy file from github to mapmaker
 	di "Downloading latest mapmaker source from Github..."
+	cap rm src.zip
 	copy https://raw.githubusercontent.com/mdroste/stata-mapmaker/master/src.zip src.zip
 	
 	* Unzip file
 	di "Unzipping mapmaker files to `c(sysdir_personal)'mapmaker"
 	unzipfile src.zip, replace
 
-	* Trying to set permissions
+	* If not on Windows, try to set permissions for mac.phantomjs
 	if "`c(os)'"!="Windows" {
 		di "Windows not detected, trying to set permissions"
 		cd "`c(sysdir_personal)'mapmaker/bin"
 		!chmod 777 mac.phantomjs
 	}
-
-	* Remove zip
-	rm src.zip
 
 	* Change back to original directory
 	cd "`old_dir'"
