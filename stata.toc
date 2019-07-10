@@ -1,4 +1,0 @@
-
-v 0.31
-d Michael Droste, mdroste@fas.harvard.edu
-p 'mapmaker': Pretty D3JS maps from Stata

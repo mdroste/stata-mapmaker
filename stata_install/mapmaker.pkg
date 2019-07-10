@@ -1,0 +1,8 @@
+v 0.31
+d
+d 'mapmaker': Pretty D3JS maps from Stata
+d
+d Distribution-Date: 20190710
+d
+f mapmaker.ado
+f mapmaker_setup.ado
