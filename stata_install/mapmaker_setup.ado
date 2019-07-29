@@ -14,7 +14,7 @@ program define mapmaker_setup
 	* Copy file from github to mapmaker
 	di "Downloading latest mapmaker source from Github..."
 	cap rm src.zip
-	copy https://raw.githubusercontent.com/mdroste/stata-mapmaker/master/src.zip src.zip
+	copy https://raw.githubusercontent.com/mdroste/stata-mapmaker/master/stata_install/src.zip src.zip
 	
 	* Unzip file
 	di "Unzipping mapmaker files to `c(sysdir_personal)'mapmaker"
