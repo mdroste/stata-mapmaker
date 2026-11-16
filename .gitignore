@@ -1,0 +1,12 @@
+.venv/
+.cache/
+build/
+dist/
+runtime/
+__pycache__/
+*.pyc
+*.log
+tests/output/
+assets/*/geometry.json.gz
+assets/*/ids.csv
+assets/*/manifest.json
