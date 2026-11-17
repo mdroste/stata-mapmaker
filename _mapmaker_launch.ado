@@ -8,6 +8,16 @@ program define _mapmaker_launch
     if `"`engine'"' == "" & `"`python'"' == "" {
         local engine `"`root'/runtime/mapmaker-render/mapmaker-render"'
         if "`c(os)'" == "Windows" local engine `"`engine'.exe"'
+        capture confirm file `"`engine'"'
+        if _rc {
+            local candidate `"`root'/.venv/bin/python"'
+            if "`c(os)'" == "Windows" local candidate `"`root'/.venv/Scripts/python.exe"'
+            capture confirm file `"`candidate'"'
+            if !_rc {
+                local python `"`candidate'"'
+                local engine ""
+            }
+        }
     }
     if `"`python'"' != "" {
         confirm file `"`python'"'
@@ -16,8 +26,9 @@ program define _mapmaker_launch
     else {
         capture confirm file `"`engine'"'
         if _rc {
-            di as err "Bundled renderer is not installed."
-            di as err "Build it with tools/build_bundle.py, or explicitly select python() for development."
+            di as err "Mapmaker's packaged runtime was not found."
+            di as err "Extract the full bundle for your operating system, then add its folder to adopath."
+            di as err "Keep runtime/, assets/, and catalog/ alongside mapmaker.ado. See readme.md."
             exit 601
         }
     }

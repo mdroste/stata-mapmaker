@@ -15,7 +15,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ["mapmaker.ado", "_mapmaker_run.ado", "_mapmaker_launch.ado", "mapmaker_mata.mata",
+FILES = ["mapmaker.ado", "_mapmaker_run.ado", "_mapmaker_launch.ado", "_mapmaker_library.ado", "mapmaker_mata.mata",
+         "_mapmaker_legacy_run.ado", "_mapmaker_figure.ado", "_mapmaker_classify.ado", "_mapmaker_normalize.ado", "_mapmaker_status.ado", "mapmaker_figure.mata",
          "mapmaker.sthlp", "mapmaker_setup.ado", "LICENSE", "readme.md"]
 
 
@@ -45,6 +46,12 @@ def main():
     for name in FILES:
         shutil.copy2(ROOT / name, stage / name)
     shutil.copytree(binary, stage / "runtime/mapmaker-render", symlinks=True)
+    shutil.copytree(ROOT / "catalog", stage / "catalog")
+    for name in ["examples/quickstart.do", "examples/projections.do", "examples/research-figures.do", "doc/research-figures.md", "doc/feature-validation.md", "doc/mapmaker-v2-design.md", "doc/mapmaker-roadmap.md", "doc/geographies.md", "doc/geography-validation.md", "doc/projections.md",
+                 "doc/examples/counties-v2.png"]:
+        destination = stage / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, destination)
     for geo in geographies:
         shutil.copytree(ROOT / "assets" / (geo + "-legacy"), stage / "assets" / (geo + "-legacy"))
     notices = stage / "licenses"
@@ -73,7 +80,9 @@ def main():
                     found.append(str(file))
         if not found:
             raise RuntimeError(f"No license collected for {name}; inspect its installed distribution")
-    (stage / "build-info.json").write_text(json.dumps({"python": sys.version, "target": target,
+    sys.path.insert(0,str(ROOT/"python"))
+    from mapmaker_engine.reproduction import fingerprint
+    (stage / "build-info.json").write_text(json.dumps({"python": sys.version, "target": target, "engine_sha256": fingerprint(ROOT),
         "dependencies": dependencies, "signed": False, "clean_machine_tested": False}, indent=2) + "\n")
     # tar preserves POSIX symlinks and executable permissions. Windows bundles use ZIP.
     archive = shutil.make_archive(str(stage), "zip" if platform.system() == "Windows" else "gztar",

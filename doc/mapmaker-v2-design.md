@@ -1,317 +1,313 @@
-# Mapmaker rewrite
+# Maintaining Mapmaker
 
-Design proposal, November 16, 2026. The public command remains `mapmaker`.
-This document specifies the target architecture. A working source alpha now
-implements the Stata front end, direct renderer, legacy pack compiler, and
-regression tests. See `readme.md` for the current implementation and limitations;
-the binary release and verified geography targets below remain incomplete.
+This guide describes version 2.0.0a1. See the [README](../readme.md) for setup
+and a first map, and [Stata help](../mapmaker.sthlp) for the command reference.
+See the [feature, geography, and projection roadmap](mapmaker-roadmap.md) for
+proposed additions, priorities, and implementation milestones.
 
-## Recommendation
+## Source development setup
 
-Build a Stata front end and a self-contained Python rendering executable.
-Bundle the Python interpreter, Matplotlib, its required dependencies, and fonts.
-Use prepared geographic assets so ordinary map rendering needs no GIS software.
-Users should install Mapmaker once and then produce maps offline, without
-configuring Python, running pip, or installing a browser.
+The supported installation path for users is the prepackaged bundle described
+in the README. Python, Git, virtual environments, and package installation are
+only needed when developing or building Mapmaker from source.
 
-The initial product is publication-quality static choropleths, with particular
-attention to census tracts, consistent with the existing command's purpose.
-PDF, SVG, and PNG are first-class outputs. Stata 16 is the proposed minimum;
-the front end can use private frames even though the default execution path
-does not depend on Stata's Python integration.
+Clone the repository and enter it:
 
-Stata's Python integration remains a possible development adapter. It should
-not determine the end-user dependency model. Vendoring Python packages into
-an ado directory does not supply the interpreter or resolve compiled-extension
-compatibility with a user's Python. A frozen executable avoids that dependency
-on the user's environment [1–3]. It runs outside Stata, so it cannot use `sfi`
-to access Stata's live data; the front end must serialize its inputs.
-
-## Findings from the existing implementation
-
-The current route is Stata → CSV → Python → D3-generated SVG in PhantomJS →
-image. The example image demonstrates the features worth preserving: crisp
-boundaries, a compact legend, missing-data hatching, and Alaska/Hawaii insets.
-
-| Finding | Evidence | Consequence for the rewrite |
-| --- | --- | --- |
-| Platform-dependent browser distribution | `src/bin` occupies approximately 89 MiB; `mac.phantomjs` is an Intel x86-64 Mach-O executable. Python sends all non-Windows platforms to that executable. | Provide explicit platform builds and eliminate the browser from static rendering. |
-| Shared mutable run files | Stata exports `temp/temp`t'.csv`, but does not define `t`; Python overwrites `filepaths.js` and `map_settings.json`. | Give every invocation a private temporary workspace; treat installed code and map packs as read-only. |
-| Silent duplicate-ID replacement | `csvDataDict[d[csv_id_col]] = ...` in both HTML templates. | Require one observation per normalized geographic ID after `if`/`in`. |
-| Classification differs from the help file | The help claims `xtile` behavior; the implementation uses `d3.scale.quantile()` and right-bisect threshold assignment. | Calculate cutoffs and bin assignments in Stata and pass both to the renderer. |
-| Zoom changes the geographic universe | `generatePathsFileFromTemplate()` switches from `usa_county_cz_zip.json` to `_2.json`. Those files contain 3,212 and 3,143 counties, respectively. Their ID sets differ in both directions. | A change in viewport must not silently change geographic vintage or coverage. |
-| Fragile export and failure handling | `rasterize.js` waits a fixed 200 ms before capture. Python prints renderer failure without propagating a nonzero exit status. | Render synchronously and return structured success/failure information. |
-| Mutable installation source | Setup downloads an archive from the `master` branch and runs `chmod 777` on the Mac browser. | Install immutable, versioned releases using ordinary permissions and platform signing. |
-| Distribution drift | Root and installation copies of the ado differ; the package manifest omits the help file. | Generate distribution files from a single source tree. |
-
-The source directory occupies approximately 211 MiB, including 119 MiB of
-geography, and the installation archive is approximately 69 MiB compressed.
-These are measurements of this checkout, not estimates for the replacement.
-
-The classification discrepancy was checked using the installed StataNow 19.5
-under `version 16`. For values 1, 2, 3, 4, 5, Stata's quartile assignments are
-1, 1, 2, 3, 4. The checked-in D3 code gives 1, 2, 3, 4, 4: both have thresholds
-2, 3, 4, but treat equality differently. The percentile estimators also differ
-in general, as can be seen directly in the bundled `d3.quantile` formula.
-This was a targeted statistical check, not a complete run of the legacy renderer.
-
-## Alternatives
-
-| Architecture | User setup | Maintenance implications | Assessment |
-| --- | --- | --- | --- |
-| Native Stata/Mata drawing | Stata and map assets | Most straightforward distribution; native graph objects. Existing `geoplot` also has separately installed ado/Mata dependencies [4]. | A credible alternative if `.gph` editing and Stata graph composition are primary requirements. Benchmark before dismissing it on speed or appearance. |
-| Stata Python integration with vendored packages | A compatible Python installation and Stata configuration | Native wheels vary by operating system, CPU, and Python ABI; shared interpreter imports can conflict. | Suitable for development or an explicitly supported expert mode. |
-| Frozen Python with Matplotlib | Mapmaker's platform bundle | Release engineering moves to the maintainer; one tested interpreter and dependency set per platform. | Recommended default. |
-| D3 with bundled Chromium | A browser/runtime bundle supplied by Mapmaker | Browser lifecycle, subprocesses, fonts, asynchronous rendering, and a larger runtime surface. | Reconsider for a future interactive HTML product. |
-| Custom SVG engine with a native conversion tool, or a Rust renderer | Mapmaker's platform bundle | Potentially smaller; requires more work on text, layout, projection, clipping, and multiple output formats. | Reconsider only if measured bundle size or startup time makes Python unsuitable. |
-
-A frozen application still relies on supported operating-system facilities.
-It removes separately installed application dependencies; it does not guarantee
-execution on every OS version or on machines that prohibit external executables.
-The outputs will be external graphics, without Stata Graph Editor support.
-
-## Division of responsibility
-
-| Component | Responsibility |
-| --- | --- |
-| `mapmaker.ado` and small private helpers | Syntax, sample selection, ID validation, geography lookup, classification, legend-number formatting, export policy, `r()` results, and error reporting. |
-| Python core and Matplotlib renderer | Validate the request, load prepared paths, compose the map and legend, render PDF/SVG/PNG, and report output metadata. |
-| Geography build tools | Acquire source boundaries, validate them, resolve IDs, simplify shared borders, project, prepare inset layouts, and generate immutable map packs. |
-| Release tooling | Lock dependencies, build executables, bundle fonts/licenses, package assets, sign releases, and test installations on clean machines. |
-
-Keep a small core that accepts ordinary data structures and has no dependency
-on `sfi`. The executable adapter is the production entry point. An optional SFI
-adapter can later feed the same request structure during development; it must
-not silently select a different rendering engine or alter global Python settings.
-
-### Stata behavior
-
-1. Apply `if` and `in` in a private frame without dropping observations merely
-   because the mapped value is missing.
-2. Normalize identifiers according to the chosen pack's schema. Preserve strings
-   and leading zeros. Accept integer numeric FIPS where representation is safe;
-   refuse numeric tract IDs stored as Stata `float`, which cannot reliably
-   preserve 11-digit codes. Converting an already rounded ID to `double` cannot
-   repair it. Custom identifiers remain strings unless their schema says otherwise.
-3. Validate uniqueness after normalization and fail on duplicate or missing IDs.
-   Do not infer an aggregation rule for repeated observations.
-4. Match against the pack's small ID table before calculating quantiles. Fail
-   on unmatched selected IDs by default, with examples and a count. An explicit
-   `unmatched(drop)` option may exclude them and report the exclusion.
-5. Use `xtile`/`_pctile` for quantiles. For explicit cutoffs, use the same
-   upper-inclusive convention: `x <= c1`, `c1 < x <= c2`, and so on. Retain
-   requested bin identities and report empty bins caused by ties; never split
-   identical values to manufacture equal counts. Reject non-increasing custom
-   cutoffs. Weighted and alternative classifiers can be added with defined semantics.
-6. Treat `.`, `.a`, …, `.z` as missing mapped values. Keep missing and valid zero
-   distinct. Fail clearly on an entirely missing classification sample; allow a
-   one-valued sample to produce a single-color map with an explicit message.
-7. Separate sample, display, and extent. `if`/`in` determine the data and quantile
-   sample; display options choose the geographic canvas; zoom changes the
-   viewport. Cropping must not recompute bins. Missing-valued selected regions
-   must not disappear from the extent without an explicit option.
-8. Return cutoffs, bin counts, matched/unmatched counts, missing counts, output
-   paths, engine version, and exact geography-pack version in `r()`.
-
-The default map can show boundary features without a corresponding data row in
-the missing-data style, while reporting absent rows separately from observed
-rows with missing values. Explicit cutoffs make comparisons across panels and
-years reproducible. The legend uses the actual cutoffs and interval convention;
-rounding labels must not make distinct boundaries indistinguishable.
-
-### Process and file contract
-
-Use a versioned request document for styles, pack identity, paths, and output
-settings, plus a small UTF-8 table of canonical ID, bin number, and missing-data
-status. Do not export the user's full dataset. Include raw values only when a
-requested feature needs them. Data transfer at one row per geographic unit is
-unlikely to justify complicating installation for an in-process bridge; measure
-it in the tract benchmark.
-
-Pass only the generated request path to the executable. Encode user text in the
-request with a real serializer rather than assembling executable Python or shell
-source. Test quoting of the executable/request paths on Windows and POSIX,
-including spaces and shell metacharacters. Supply a unique request ID and private
-response path so an old output cannot be mistaken for a successful new run.
-
-Use unique temporary files and always clean up on success or failure. Export to
-a temporary sibling of the requested output and commit only after successful
-rendering; preserve existing files unless `replace` was specified. The renderer
-returns an exit status and structured diagnostics; Stata checks both the response
-and the output. Never execute a renderer-generated do-file to obtain results.
-
-The implementation must restore the user's frame, data, sort order, and settings
-after errors, and need not change the working directory. Support simultaneous
-Stata sessions. Provide `nodisplay` for batch work; preview through the operating
-system only after the output has been verified.
-
-## Rendering and appearance
-
-Use Matplotlib's direct PDF and SVG backends and Agg for PNG [5]. Bundle all
-required transitive dependencies [6], but exclude unused GUI backends after
-testing. Built-in fonts and default styles should be isolated from the user's
-Matplotlib configuration. External TeX is unnecessary for the default typography.
-
-Prepared polygon paths, compound rings, and batched path/line collections are
-sufficient for stock choropleths. Preserve holes, islands, and multipart regions.
-Draw shared borders once, with separate styles for county and state outlines.
-Verify raster seams and clipping in real exports. Use explicit layout for the
-legend and insets, maintaining the existing command's compact appearance.
-
-Default to five bins and a perceptually ordered sequential palette. Keep
-ColorBrewer choices and explicit colors available, with diverging palettes for
-signed quantities. Add a documented legacy style for users who want the older
-ten-bin appearance, without claiming identical historical classification.
-
-Support physical figure size and PNG DPI separately. Bundle licensed serif and
-sans-serif fonts, subset/embed PDF fonts, and define SVG text handling explicitly.
-Offer text-as-paths for portable SVG appearance and editable text as an option.
-For very detailed tract maps, permit polygon rasterization within a PDF while
-retaining vector labels and legend. Full vector output remains available.
-
-## Geography as a versioned asset
-
-Source provenance and vintage are part of the statistical specification. A pack
-should contain a manifest, canonical ID table, projected geometry, shared-border
-meshes, feature bounds, and several documented levels of detail. Record source
-URLs, source checksums, boundary date, ID schema, projection, coverage, exclusions,
-simplification parameters, attribution, and pack-format version. Quantization and
-simplification must have a stated tolerance and preserve shared topology.
-
-Use official Census cartographic boundary files for national thematic maps where
-their simplification is appropriate [7]. Use more detailed source material for
-close tract views. The build environment can contain GDAL, PROJ/pyproj,
-Shapely/GEOS, and topology tools. Those tools need not ship to ordinary users.
-
-For the first release, prepare projected coordinates for the supported layouts:
-CONUS Albers, Alaska, Hawaii, and explicit national inset placement. A national
-inset layout is a composition of separate projections. A local Alaska view must
-use its geographic panel coordinates, not its scaled inset position. Other
-territories require explicit coverage and layout rules. Keep geographic
-coordinates in the reproducible source assets for subsequent pack builds.
-
-Zoom can select bounds and a finer prepared level of detail without a runtime
-projection library. Arbitrary user-selected projections, spatial dissolves,
-crosswalks, and unrestricted shapefile import would require additional geometry
-processing. Treat these as separate features. Initially, accept custom geography
-through a documented pack-building workflow; do not promise general GIS import
-with the minimal renderer.
-
-Bundle a modest state/county starter pack. Distribute tracts, PUMAs, ZCTAs, and
-commuting zones separately, with tract packs partitioned by state. Allow explicit
-one-time downloads and installation from local archives for offline machines.
-Mapmaking itself does not contact the network. Pins remain valid after new
-releases; an unqualified geography alias resolves to a documented fixed default
-for the installed release and reports its resolved version.
-
-Audit the old assets before reuse. In particular, establish the original source
-and vintage of the 741 commuting zones, and verify the old ZIP layer. New ZIP-area
-support should be named ZCTA where that is what the source represents [8]. Never
-silently reinterpret a postal ZIP code or crosswalk boundaries across vintages.
-
-## Distribution
-
-Start with PyInstaller one-folder builds: a single archive is downloaded and
-installed once, then its executable runs in place [2]. One-file builds unpack at
-each launch and complicate restricted temporary directories. The user need not
-interact with the files inside either kind of bundle.
-
-Target native macOS arm64 and x86-64, Windows x86-64, and Linux x86-64 builds.
-Declare minimum supported OS versions and test each target; decide other CPU
-targets from demand. Build Linux against a deliberately chosen older supported
-glibc baseline. PyInstaller builds are platform-specific [3].
-
-Use signed/notarized Mac releases and signed Windows releases for distribution.
-PyInstaller's automatic ad-hoc Mac signing is not a substitute for release
-signing [9]. Preserve symlinks and executable permissions when packaging and
-extracting POSIX builds [10]; do not assume Stata's `unzipfile` preserves them.
-A tested OS-native extraction path or a verified alternative bundle layout is a
-release requirement. Ordinary users should not be asked to disable OS security.
-
-Keep `mapmaker_setup` as a bootstrap helper if needed. Stata's normal package
-installation supplies the ado/help files; setup installs the exact supported
-runtime and starter assets in a writable per-user location. Setup must work when
-Python is absent: OS/CPU detection, archive extraction, and initial checksum
-verification cannot depend on the runtime it is about to install. Validate that
-bootstrap on every target, using an audited native/Stata implementation or
-available OS facilities. Test downloads and offline archives through the same
-verification path. Pin release hashes and fail without replacing an existing
-installation if verification or extraction fails.
-
-Provide `mapmaker doctor` to report the selected ado, runtime path/version,
-platform support, asset availability, and an actual tiny export test. Keep
-runtime versions side by side and change the active version only after a smoke
-test. Do not automatically upgrade when producing a map. Generate the package
-manifest and installed ado/help files from one source of truth. Include the
-licenses for the interpreter, libraries, fonts, and redistributed data.
-
-## Proposed command surface
-
-The syntax below is illustrative and is not implemented yet. Preserve familiar
-options where their meaning is sound; keep `geovar()`/`id()` and
-`savegraph()`/`saving()` as aliases. Use `vintage()` to identify boundary vintage
-and a pack revision in metadata to identify subsequent corrections.
-
-```stata
-mapmaker income, geography(county) vintage(2020) id(county_fips) ///
-    nquantiles(5) colorscheme(viridis) saving("income.pdf") replace
-
-mapmaker poverty if state_fips == 6, geography(tract) vintage(2020) ///
-    id(tract_geoid) zoomtoregion cutvalues(10 20 30 40) ///
-    saving("california.svg") replace
-
-mapmaker doctor
+```sh
+git clone https://github.com/mdroste/stata-mapmaker.git
+cd stata-mapmaker
 ```
 
-Provide a versioned legacy release for replication. The new command should not
-claim bit-for-bit compatibility: corrected bins, audited boundaries, font
-metrics, and default styling can change a figure. Avoid carrying forward
-experiment-specific switches such as `maurice` into the main interface.
+On Windows, run in PowerShell:
 
-## Implementation sequence and acceptance criteria
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe tools/prepare_legacy.py
+```
 
-1. **Packaging and rendering experiment.** Build a frozen renderer and invoke it
-   from a minimal ado on clean Mac and Windows installations without Python.
-   Export one county map and one dense tract map to all three formats. Measure
-   cold/warm startup, transfer time, peak memory, archive size, export time, and
-   file size. Exercise signing, archive extraction, fonts, path quoting, and
-   failure reporting. This resolves the main architecture risk before expanding
-   the option surface. Include a native Stata comparison for the same figures.
-2. **Usable county/state command.** Implement the request contract, validation,
-   Stata classifications, prepared starter assets, legends, insets, missing data,
-   and atomic exports. Test leading zeros, duplicate IDs, extended missing values,
-   equal cutoffs, ties, constant samples, all-missing samples, bad destinations,
-   non-ASCII paths, simultaneous runs, and unchanged caller state after failure.
-3. **Fine geography and replication.** Add audited commuting-zone assets and
-   2010/2020 tract packs, appropriate detail selection, local extent handling,
-   exact pack pins, reproducibility metadata, and custom-pack documentation.
-4. **Distribution and documentation.** Complete the Linux target, offline setup,
-   platform installation tests, visual regression examples, migrated help, and
-   reproducible release builds. Published support follows actual tests rather
-   than assumptions from a successful local Python run.
+On macOS or Linux:
 
-Use exact assertions for IDs, samples, bins, and geometry validity. Compare
-rendered figures with tolerances appropriate to each supported platform and
-inspect PDF/SVG fonts and paths. Byte-identical graphics across operating systems
-are not an initial requirement; correct classifications, stable assets, and
-consistent visual results are.
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python tools/prepare_legacy.py
+```
 
-At the time of the initial proposal, only source/asset inspection and a targeted
-Stata classification check had been completed. The subsequent source alpha has
-been exercised locally on macOS with county/state exports and a Los Angeles
-tract example. Its self-contained packaging remains unverified because the
-build dependency could not be downloaded in the development environment. No
-clean-machine or other-platform result should be inferred from the local tests.
+In Stata, add the checkout to `adopath`. The launcher uses its `.venv` when no
+bundled runtime is present. `python()` and `engine()` are optional development
+overrides. `examples/smoke.do` and `examples/tracts.do` are source-development
+examples; prepare `tract` with `tools/prepare_legacy.py tract` before running the
+tract example. Bundle users can run `examples/quickstart.do` from a writable
+project directory, with no runtime configuration.
 
-## References
+## How a map is made
 
-1. [Stata: Python integration manual](https://www.stata.com/manuals/ppystataintegration.pdf) and [Stata's setup walkthrough](https://blog.stata.com/2020/08/18/stata-python-integration-part-1-setting-up-stata-to-use-python/).
-2. [PyInstaller: operating modes](https://www.pyinstaller.org/en/stable/operating-mode.html).
-3. [PyInstaller manual: bundling and supported platforms](https://www.pyinstaller.org/en/stable/index.html).
-4. [Ben Jann: geoplot source and installation requirements](https://github.com/benjann/geoplot).
-5. [Matplotlib: static rendering backends](https://matplotlib.org/stable/users/explain/backends.html).
-6. [Matplotlib: dependencies](https://matplotlib.org/stable/install/dependencies).
-7. [Census Bureau: cartographic boundary files](https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html).
-8. [Census Bureau: ZIP Code Tabulation Areas](https://www.census.gov/programs-surveys/geography/guidance/geo-areas/zctas.html).
-9. [PyInstaller: macOS architecture and signing](https://www.pyinstaller.org/en/stable/feature-notes.html).
-10. [PyInstaller: archive and symlink requirements](https://pyinstaller.org/en/latest/common-issues-and-pitfalls.html).
+Stata selects observations, checks geographic IDs, and assigns values to bins.
+It sends IDs, bin assignments, labels, and drawing options to a separate Python
+process. Matplotlib draws the map and saves a PDF, SVG, or PNG. Rendering works
+offline after dependencies and boundary files have been prepared.
+
+| File | Role |
+| --- | --- |
+| `mapmaker.ado` | Preserve and restore the dataset; handle `mapmaker doctor`. |
+| `_mapmaker_run.ado` | Parse options, match IDs, calculate bins, format labels, and return results. |
+| `mapmaker_mata.mata` | Write the JSON request and quote command paths. |
+| `_mapmaker_launch.ado` | Start the selected Python interpreter or bundled executable. |
+| `_mapmaker_library.ado` | Browse, install, resolve, remove, and import geography packs without modifying Stata data. |
+| `python/mapmaker_engine/cli.py` | Read the request, isolate Matplotlib settings, and report success or failure. |
+| `python/mapmaker_engine/render.py` | Check inputs and boundary files, draw the figure, and save output. |
+| `python/mapmaker_engine/geography.py` | Validate catalog/downloads, compile shapefiles, resolve and manage immutable revisions. |
+| `python/mapmaker_engine/library.py` | Dispatch management requests and produce safe SMCL reports. |
+| `python/mapmaker_engine/projections.py` | Browse bundled CRS definitions and project source coordinates offline. |
+| `catalog/geographies.json` | Reviewed source URLs, hashes, sizes, join fields, and vintages. |
+| `tools/prepare_legacy.py` | Convert the original boundary files into the format the renderer reads. |
+| `tools/build_bundle.py` | Build and package an executable with Python and its dependencies. |
+
+The root ado and help files define the current command. `legacy/`,
+`stata_install/`, and the browser code in `src/` preserve the previous version.
+Default legacy packs use boundary data from `src/geos/`. Optional dated Census
+packs download verified shapefiles and compile them locally.
+
+## Data and classification
+
+`if` and `in` select observations before ID checks. Each selected area must
+have one row. Mapmaker pads state, county, and tract IDs to 2, 5, and 11 digits,
+respectively; it normalizes commuting-zone IDs to integer strings. It rejects
+missing IDs, duplicate IDs, and numeric tract IDs stored as `float`.
+
+Mapmaker matches IDs before calculating bins. An unmatched ID stops the command
+unless the user specifies `unmatched(drop)`. `xtile` and `_pctile` calculate
+quantile assignments and cutoffs in Stata. Custom cutoffs use the same rule:
+a value equal to a cutoff belongs to the lower bin. Ties can leave bins empty.
+With quantile classification, a constant sample uses one color.
+
+System and extended missing values appear as missing on the map and do not
+enter the quantiles. An entirely missing sample stops the command. Zoom fits
+the view to matched selected areas, including those with missing values, and
+keeps the existing bins. `context` adds surrounding areas in the missing-value
+color. The wrapper restores the caller's data and sort order after success or
+failure; it uses `preserve` and `restore`.
+
+## Files exchanged with Python
+
+Each call creates Stata temporary files for a CSV table, a JSON request, a JSON
+response, and a text status. The CSV contains only `mm_id` and `mm_bin`; missing
+bins use an empty field or `.`. The request uses schema version 1 and includes
+file paths, geography, cutoffs, labels, colors, and output settings. The renderer
+does not receive raw mapped values or the rest of the dataset.
+
+The launcher passes the request path with `--request`. On success, Python writes
+the response and a status beginning with `MAPMAKER_OK_V1`. On failure, it exits
+with code 1 and, when a status path is available, writes `MAPMAKER_ERROR_V1` and
+an error message. Stata reads the status and checks that the output exists.
+
+The renderer writes to a temporary file in the destination directory, then
+commits the completed file. With `replace`, it uses `os.replace`; otherwise,
+it uses `os.link` to avoid overwriting a file created by another process.
+The destination directory must already exist.
+
+Graphics record the engine version, boundary revision and checksum, cutoffs,
+labels, bin counts, and match counts in their metadata. Stata returns sample
+counts, bins, cutoffs, output path, geography, and version information in `r()`;
+the help file defines each result.
+
+See the [geography library guide](geographies.md) for the expanded provider catalog,
+source audits, membership resources, and Stata inspection commands.
+
+## Boundary files
+
+The original files do not establish their source or boundary dates. The code
+keeps `legacy` as their identifier. Dated packs are separate catalog entries;
+they never relabel the original boundaries. `vintage(2020)` with the county/state
+shorthand resolves to the corresponding national 500k pack, which must be installed.
+
+| Geography | Source in `src/geos/` | ID |
+| --- | --- | --- |
+| County | `counties_hr.json` | 5-digit FIPS |
+| State | `usa_county_cz_zip.json` | 2-digit FIPS |
+| Commuting zone | `usa_county_cz_zip.json` | Original numeric ID |
+| Census tract | `tract2010_lores.json` | 11-digit GEOID |
+
+The preparation script writes three files to `assets/<geography>-legacy/`:
+
+- `ids.csv` lists the geographic IDs that Stata can match.
+- `geometry.json.gz` stores projected polygons, bounds, and border lines.
+- `manifest.json` records file hashes, projection parameters, coverage, and
+  excluded IDs. The renderer checks the geometry and ID-table hashes when loading.
+
+The script uses spherical Albers projections for the contiguous states, Alaska,
+Hawaii, and Puerto Rico. It preserves polygon holes and applies no further
+simplification. The state data cover 50 states, DC, and Puerto Rico. The tract
+data contain 73,798 usable areas; five source features lack usable polygons.
+The commuting-zone data contain 741 areas. Generated files are ignored by Git;
+rebuild them with the commands in the README.
+
+## Tests
+
+From the repository root, after completing setup, run:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+On Windows, use `.venv\Scripts\python.exe` in place of `.venv/bin/python`.
+Then run these do-files in Stata from the same directory. They clear the data
+in memory and write figures to `tests/output/`.
+
+```stata
+do tests/stata.do
+do examples/smoke.do
+do examples/tracts.do
+```
+
+The Python tests cover output formats, polygon holes, input checks, file hashes,
+failed replacements, concurrent writes, and subprocess error reporting. The
+Stata tests check bins, missing values, ID handling, and dataset restoration.
+The examples draw county maps and 2,345 Los Angeles County tracts. Inspect their
+figures for clipping, legibility, and boundary detail after rendering changes.
+
+On November 16, 2026, source setup, all eight Python tests, the Stata tests,
+and both example do-files passed on Windows x86-64 with Python 3.14.6 and
+StataNow/MP 19.5 under `version 16`. The previous development record also
+reports runs on macOS arm64 with Python 3.14 and StataNow 19.5. Tests on
+Stata 16 itself, Linux, and standalone installations remain release tasks.
+
+The geography-library extension subsequently passed 22 Python tests,
+`tests/stata.do`, `tests/library.do`, and `tests/library_online.do` on the same
+Windows/Stata environment. All 11 catalog downloads were fingerprinted, installed,
+and rendered; the 119th Congress national PNG was visually inspected. The online
+Stata test downloads a Census pack, maps it, and removes the test installation.
+The library test checks dataset preservation across browsing, imports, successful
+maps, and missing revisions. The original example results above predate this extension.
+
+## Geography catalog and installation
+
+`mapmaker geography browse` merges the bundled catalog, an explicitly refreshed
+user catalog, and installed manifests. It shows installed/available status,
+source detail, and sizes. Reports contain SMCL links built only from validated
+identifiers and quoted runtime/library paths. Catalog text is escaped, never
+executed. The catalog can be filtered without reading or replacing Stata data.
+
+Defaults remain `county-legacy`, `state-legacy`, and `cz-legacy`; the tract legacy
+pack is optional. `mapmaker_setup` validates existing defaults or compiles missing
+ones from the source checkout. Bundles contain the three defaults already.
+
+User packs live under `packs/<pack_id>/<revision>/` in an OS-specific user data
+directory. `MAPMAKER_DATA` or `datadir()` selects another library. Resolution checks
+the user library, then bundled assets, and validates geometry/ID hashes before
+Stata matches observations. Revision defaults to 1 rather than a moving latest.
+Removal only deletes an explicitly identified user revision inside the library.
+
+Downloads are restricted to an explicit HTTPS provider allowlist, including
+redirects and reviewed GitHub repository paths, and checked against the catalog's
+SHA-256. Provider details and coverage are documented in [geographies.md](geographies.md). Download and uncompressed ZIP sizes
+are bounded. ZIP sidecars are read in memory, never extracted by member path;
+absolute/traversal paths and ambiguous shapefiles are rejected. Installation
+stages on the destination filesystem, validates, then renames atomically.
+An interruption or hash failure leaves no visible partial installation.
+
+`geography refresh` fetches the fixed public repository catalog URL into an
+atomic user cache. It retains old revisions and rejects changes to an existing
+source checksum. `using()` supports reviewed local catalog updates. The online
+endpoint becomes usable after this code/catalog is published; no publishing
+was performed as part of implementation. Browsing uses only bundled/cached data.
+
+Maintainers can run `tools/build_catalog.py` for the original Census sources or
+`tools/expand_catalog.py --provider census` (and other provider names in the
+geography guide) to audit the expanded sources. It reuses `.cache/catalog-sources/`; remove a specific cached source only
+when deliberately reviewing an upstream replacement, and create a new revision.
+`tools/check_catalog.py` installs those cached sources into an isolated test library
+and renders each. Then run `do tests/library.do` in Stata. The separate
+`do tests/library_online.do` requires network access and uses a test-only library.
+
+## Source-coordinate geometry and projections
+
+Schema 1 legacy packs remain fixed projected geometry. Schema 2 packs retain
+source-CRS rings, IDs, and panel assignments. Their manifests include WKT,
+source-sidecar hashes, the original download hash, ID rules, vintage, and revision.
+The importer accepts polygon shapefiles and GeoJSON, requires CRS metadata (or an
+explicit override), and rejects duplicate IDs, empty mapped features, invalid
+coordinates, and missing sidecars. Catalog recipes may explicitly select a ZIP
+member, filter a partition, discard Z/M coordinates, report nonspatial codes, or
+dissolve/repair a reviewed source. General local imports do not silently repair
+topology. Attribute and membership CSVs carry separate hashes. IDs preserve their
+provider conventions and can contain up to 244 UTF-8 bytes. Native source coordinates are never
+overwritten by a chosen display projection.
+
+PROJ and its CRS database are supplied by the pinned pyproj dependency.
+`projection(auto)` uses regional Albers panels for Census packs and Equal Earth
+for custom packs. Explicit CRS selection uses a single panel. All Census source
+territories are retained, including separate insets where present. New non-state
+packs currently draw region boundaries without a separate state outline layer;
+legacy/state packs supply that layer. Geographic source polygons and lines are
+split at the antimeridian. More general projection-center/horizon clipping remains
+future work. Older spherical CZ sources preserve their supplied projection under
+auto because their datum is unnamed; a WGS84 transformation is not assumed.
+
+Transformations use `always_xy`, disallow ballpark operations, and disable PROJ
+networking. Missing specialized grids fail explicitly; grid installation remains
+an advanced manual PROJ task. Output metadata records source/target WKT, selected
+transformation descriptions, and PROJ/pyproj versions. Projected geometry is
+currently computed per render; a bounded derived-geometry cache is a future
+performance improvement. No geometry or mapped values are uploaded.
+
+## Building an installer
+
+The build script creates an unsigned folder containing the executable, Stata
+files, boundaries, licenses, README/help, and `examples/quickstart.do`. It also
+includes the maintainer guide and README image so its relative links work offline.
+Run it from the repository root on each target
+operating system and CPU, using a separate build environment:
+
+```sh
+python -m pip install -r requirements-build.txt
+python tools/build_bundle.py --python-license /path/to/cpython/LICENSE
+```
+
+Pass `--with-tracts` to include tract boundaries; the default includes counties,
+states, and commuting zones. The script checks dependency versions, collects
+licenses, and creates an archive and SHA-256 file in `dist/`. Windows uses ZIP;
+macOS and Linux use tar to preserve executable permissions and symlinks.
+
+After extraction, add the bundle's top-level folder to Stata's `adopath`.
+Mapmaker then selects `runtime/mapmaker-render/mapmaker-render` (`.exe` on
+Windows). `engine()` selects another executable; `python()` selects a source
+interpreter. A source checkout falls back to its `.venv` if no bundled executable
+exists. Neither changes Stata's Python settings. `mapmaker_setup` prepares and
+validates default packs; `mapmaker doctor` lists paths and bundled boundaries.
+Use `mapmaker geography browse, installed` to include the user library.
+
+The unsigned Windows amd64 bundle built successfully with the geography extension.
+`tools/check_bundle.py dist/mapmaker-windows-amd64` verified its three defaults,
+bundled CRS database, shapefile/GeoJSON import, date-line splitting, table export,
+ERS 2020 county dissolve, and projected PNG/PDF/SVG exports through
+the frozen executable. This was a development-machine check, not a clean-machine
+or signed release; no standalone release has been published. Before publishing,
+build and test each target on a clean machine,
+choose supported OS versions, sign Windows and macOS executables, and test
+archive extraction, paths with spaces, fonts, and all three output formats.
+Record startup time, tract rendering time, memory use, and archive size.
+
+The expanded geography catalog is documented in [geographies.md](geographies.md).
+Further work includes additional small-area/annual editions, general crosswalk
+allocation and broader county-block coverage. Projection presets, horizon/lobe
+clipping, explicit datum grids, and bounded projected-geometry caching are now
+documented in [projections.md](projections.md). New providers still require source
+and distribution-term review. The frozen renderer includes Shapely/GEOS for seam
+splitting and explicit dissolves; spreadsheet readers used to prepare historical
+membership tables are build-only dependencies. Its fixed DejaVu Sans family keeps
+four TTF faces and Matplotlib's required LastResort fallback; unused TTF fonts
+are excluded from the bundle.
+
+Projection checks run with `python -m unittest discover -s tests -q`,
+`python tools/check_projections.py`, and `tests/projections.do` in Stata.
+`tools/check_projections.py --bundle dist/mapmaker-windows-amd64` exercises every
+named preset through the frozen executable, using offline cached world, ABS,
+Statistics Canada, and GISCO sources. It checks three comparison formats,
+recommendations, selected grid checksums, isolation from an inherited PROJ
+cache/network setting, and the cache budget. Maintainer fixtures include the
+optional UK OSTN15 grid; the grid is never included in the default bundle.
+`tools/build_projection_catalog.py` refreshes the small reviewed horizontal-grid
+catalog and provider notices without downloading grid data. Review license
+changes before shipping a refreshed catalog.

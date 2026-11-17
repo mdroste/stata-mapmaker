@@ -10,3 +10,7 @@ pyparsing==3.3.3
 python-dateutil==3.0.0
 six==1.17.0
 tzdata==2026.5
+pyproj==3.8.0
+pyshp==2.3.1
+shapely==2.1.2
+certifi==2026.10.23

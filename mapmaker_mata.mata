@@ -3,6 +3,7 @@ capture mata: mata drop _mm_number()
 capture mata: mata drop _mm_request()
 capture mata: mata drop _mm_quote()
 capture mata: mata drop _mm_command()
+capture mata: mata drop _mm_library_request()
 mata:
 string scalar _mm_json(string scalar s)
 {
@@ -33,14 +34,14 @@ void _mm_request()
     string scalar text
     string rowvector keys, locals, words
     text = "{" + char(34) + "schema" + char(34) + ":1"
-    keys = ("output","pack","data","response","status","geography","vintage","palette","title","note","legendtitle","missinglabel")
-    locals = ("output","pack","data","response","status","geography","vintage","colorscheme","title","note","legendtitle","labelmissing")
+    keys = ("output","pack","data","response","status","geography","vintage","palette","title","note","legendtitle","missinglabel","projection","layout","root","datadir","center","region","insets","grids","report")
+    locals = ("output","pack","data","response","status","geography","vintage","colorscheme","title","note","legendtitle","labelmissing","projection","layout","root","datadir","center","region","insets","grids","report")
     for(i=1; i<=cols(keys); i++) text = text + "," + _mm_json(keys[i]) + ":" + _mm_json(st_local(locals[i]))
     keys = ("nbins","width","height","dpi","reverse")
     locals = ("nbins","xsize","ysize","dpi","reverse")
     for(i=1; i<=cols(keys); i++) text = text + "," + _mm_json(keys[i]) + ":" + _mm_number(st_local(locals[i]))
-    keys = ("replace","zoom","context","nolegend","noborders","hatch","rasterize")
-    locals = ("replace","zoomtoregion","context","nolegend","noborders","hatchmissing","rasterize")
+    keys = ("replace","zoom","context","nolegend","noborders","hatch","rasterize","graticule","distortion")
+    locals = ("replace","zoomtoregion","context","nolegend","noborders","hatchmissing","rasterize","graticule","distortion")
     for(i=1; i<=cols(keys); i++) text = text + "," + _mm_json(keys[i]) + ":" + (st_local(locals[i])!="" ? "true" : "false")
     text = text + "," + _mm_json("states") + ":" + (st_local("nostates")=="" ? "true" : "false")
     text = text + "," + _mm_json("labels") + ":["
@@ -55,6 +56,22 @@ void _mm_request()
     text = text + "]}"
     fh = fopen(st_local("request"), "w")
     fput(fh, text)
+    fclose(fh)
+}
+void _mm_library_request()
+{
+    real scalar fh, i
+    string scalar text
+    string rowvector keys
+    text = "{" + _mm_json("schema") + ":1," + _mm_json("operation") + ":" + _mm_json("library")
+    keys = ("root","category","action","target","country","level","vintage","search","revision","datadir","using","name","idfield","crs","response","status","report","resolved","python","engine","state","provider","decade","limit","offset","saving","data","projection","geography","purpose","choices","center","region","layout","insets","grids")
+    for(i=1; i<=cols(keys); i++) text = text + "," + _mm_json(keys[i]) + ":" + _mm_json(st_local(keys[i]))
+    keys = ("source","targetpack","universe","method","denominator","audit")
+    for(i=1; i<=cols(keys); i++) text = text + "," + _mm_json(keys[i]) + ":" + _mm_json(st_local(keys[i]))
+    keys = ("installed","all","replace","graticule","distortion")
+    for(i=1; i<=cols(keys); i++) text = text + "," + _mm_json(keys[i]) + ":" + (st_local(keys[i])!="" ? "true" : "false")
+    fh = fopen(st_local("request"), "w")
+    fput(fh, text + "}")
     fclose(fh)
 }
 string scalar _mm_quote(string scalar s)

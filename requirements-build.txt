@@ -1,2 +1,3 @@
 -r requirements.txt
 pyinstaller==6.22.3
+xlrd==2.0.2
